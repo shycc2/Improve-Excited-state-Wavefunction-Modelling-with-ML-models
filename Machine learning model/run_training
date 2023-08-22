@@ -42,17 +42,3 @@ epoch=100
 train_model(folder_path,model,dataset,epoch,'name')
 
 
-model_path = os.path.join('./focktut', "name")
-best_model = torch.load(model_path)
-split_path = 'diarylethene_200_narrow.npz'
-db_path = 'fock_matrix_200_narrow.db'
-
-loss=evaluate_model_loss(model_path, db_path, split_path)
-
-
-file_path = "loss.txt"
-
-data_str = "\n".join(str(num) for num in loss)
-
-with open(file_path, "w") as file:
-    file.write(data_str)
