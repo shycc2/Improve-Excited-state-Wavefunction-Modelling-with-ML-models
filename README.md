@@ -9,6 +9,9 @@
   1.2 system1.xyz is the cartesian coordination file of 1,2-di(3-furyl)ethene before optimisation.
   
   1.3 job.pbs and sys1_cas.input is the script for running the CASSCF calculation.
+
+
+  
    
 ##2.Sampling geometry
  
@@ -17,6 +20,9 @@
   2.1 Read_log is used to extract information from log file produced by CASSCF calculation.
   
   2.2 Genarate_new_xyz_files is used to calculate new geometries and put the new cartesian coordinate files into a new folder.
+
+
+
 
 ##3.Machine learning model
   
