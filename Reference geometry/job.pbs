@@ -1,0 +1,11 @@
+#!/bin/sh
+#PBS -l select=1:ncpus=1:mem=10gb:cpu_type=ivy
+#PBS -l walltime=12:00:00
+#PBS -N sys1_fre
+
+module load tools/prod
+module load OpenMolcas/22.10-intel-2022a
+cd $HOME/sys1_casfre_July_1
+export MOLCAS_MEM=10000
+pymolcas sys1_cas.input > sys1_cas.log
+
