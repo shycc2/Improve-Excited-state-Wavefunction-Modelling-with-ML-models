@@ -1,1 +1,62 @@
+import torch
+import schnetpack as spk
+from model_output import HamiltonianOutput, MatrixOutput
+from schnetpack import ModelOutput
 
+def symm_matrix_mse(pred, targets):
+
+    pred = pred.reshape(-1, 68, 68)
+    targets = targets.reshape(-1, 68, 68)
+
+    batch_size = pred.shape[0]
+    loss = 0
+    for i in range(batch_size):
+        H = 0.5 * (pred[i] + pred[i].T)
+        loss += torch.sum(torch.square(targets[i].flatten() - H.flatten())) / len(targets[i].flatten())
+    return loss / batch_size
+
+def create_model(loss_function,lr,output_property_key,basis_set_size, cutoff):
+    
+    pairwise_distance = spk.atomistic.PairwiseDistances()
+    representation = spk.representation.PaiNN(
+        n_atom_basis=64,
+        n_interactions=5,
+        radial_basis=spk.nn.GaussianRBF(n_rbf=20, cutoff=cutoff),
+        cutoff_fn=spk.nn.CosineCutoff(cutoff)
+    )
+
+    pred_module = HamiltonianOutput(
+        output_key=output_property_key,
+        n_in=representation.n_atom_basis,
+        n_layers=2,
+        n_out=basis_set_size**2,
+        basis_set_size=basis_set_size
+    )
+
+    nnp = spk.model.NeuralNetworkPotential(
+        representation=representation,
+        input_modules=[pairwise_distance],
+        output_modules=[pred_module],
+    )
+
+    output = ModelOutput(
+        name=output_property_key,
+        loss_fn=symm_matrix_mse,
+        loss_weight=1.0,
+        metrics={}
+    )
+
+    # Putting it in the Atomistic Task framework
+    task = spk.AtomisticTask(
+        model=nnp,
+        outputs=[output],
+        optimizer_cls=torch.optim.Adam,
+        optimizer_args={"lr": lr},
+        scheduler_cls=torch.optim.lr_scheduler.ReduceLROnPlateau,
+        scheduler_args={'threshold': 1e-6, 'patience': 5},
+        # scheduler_cls=NoamLR,
+        # scheduler_args={'warmup_steps': 25},
+        scheduler_monitor='val_loss'
+    )
+
+    return task
