@@ -1,1 +1,122 @@
+import numpy as np
+import scipy
+
+def read_molcas_nm(filename,natoms):
+    '''Read mass-weighted normal modes from Molcas log file'''
+    
+    frames=(3*natoms)//6
+    col_last_frame=(3*natoms)%6
+    
+    #array to store normal mode information
+    nm_matrix=np.zeros((3*natoms,3*natoms),dtype=float)
+    
+    #tag signalling normal mode information in log file
+    read_tag=False
+    
+    with open(filename,'r') as file:
+        for line in file:
+            if 'Harmonic frequencies in cm-1' in line:
+                read_tag=True
+                
+            if read_tag and 'Symmetry ' in line:
+                #read full frames of 6
+                for i in range(frames):
+                    #skip 9 lines
+                    for j in range(9):
+                        file.readline()
+                    #read nm data
+                    for j in range(3*natoms):
+                        #conversion to float happens because of nm_matrix dtype
+                        nm_matrix[j,i*6:(i+1)*6]=file.readline().split()[-6:]
+                        
+                if col_last_frame!=0:
+                    #read last frame with less than 6 collumns
+                    #skip 9 lines
+                    for j in range(9):
+                        file.readline()
+                    #read nm data
+                    for j in range(3*natoms):
+                        #conversion to float happens because of nm_matrix dtype
+                        nm_matrix[j,-col_last_frame:]=file.readline().split()[-col_last_frame:]
+                        
+                #finished reading
+                #switch off read_tag
+                read_tag=False
+                        
+        #to remove transilations and rotations return nm_matrix[:,6:]
+        return nm_matrix[:,6:]
+    
+    
+def read_molcas_frequencies(filename,natoms):
+    '''Read frequencies (in cm-1) from Molcas log file.
+    Do not include the 6 first listed frequencies corresponding to translations and rotations'''
+    
+    frames=(3*natoms)//6
+    col_last_frame=(3*natoms)%6
+    
+    #array to store frequencies
+    frequencies=np.zeros(3*natoms-6,dtype=float)
+    
+    #tag signalling normal mode information in log file
+    read_tag=False
+    
+    with open(filename,'r') as file:    
+        #frames counter
+        iframe=0
+
+        for line in file:
+            if 'Harmonic frequencies in cm-1' in line:
+                read_tag=True
+                
+            if read_tag and "Frequency:" in line:
+                #do not read first frame with translation and rotations data
+                #these are often imaginary and hard to parse
+                if iframe!=0 and iframe<frames:
+                    frequencies[(iframe-1)*6:iframe*6]=line.split()[1:]
+                elif iframe==frames:
+                    if col_last_frame!=0:
+                        frequencies[-col_last_frame:]=line.split()[1:]
+                    
+                    #finished reading, switch off read_tag
+                    read_tag=False
+                
+                iframe=iframe+1
+    #change the unit of frequency from cm-1 to hartree
+    return frequencies*wavenumber2hartree
+
+def read_component(filename,natoms):
+    '''get the atoms in the molecule'''
+    atoms = []
+    with open(filename,'r') as file:
+        
+        for line in file:
+        #skip 2 lines
+            for j in range(1):
+                file.readline()
+            #read nm data
+            for j in range(natoms):
+                #conversion to float happens because of nm_matrix dtype
+                atoms.append(file.readline().split()[0:1])
+        return atoms
+
+def read_equilibrium_position(filename,natoms):
+    '''Read cartesian coordination of equilibrim position from Molcas xyz file'''
+    
+    #array to store equilibium position information
+    eq_matrix=np.zeros((natoms,3),dtype=float)
+    
+    
+    with open(filename,'r') as file:
+        for line in file:
+            #skip 2 lines
+            for j in range(1):
+                file.readline()
+            #read nm data
+            for j in range(natoms):
+                #conversion to float happens because of nm_matrix dtype
+                eq_matrix[j,0:natoms]=file.readline().split()[-3:]
+            
+        return eq_matrix
+
+
 
