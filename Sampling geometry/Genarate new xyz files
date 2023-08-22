@@ -1,0 +1,109 @@
+def get_D_trans(log_filename,xyz_filename,natoms):
+    '''get the transformation matrix for D'''
+    
+    xyz = read_component(xyz_filename,natoms)
+    
+    from scipy.constants import N_A,m_e,physical_constants
+    t = 1e-3/(N_A*m_e)
+    
+    from atomic_mass import atomic_mass
+    #get the mass of each atom   
+    atom = read_component(xyz_filename,natoms)
+    mass = []
+    #change the mass unit from atomic unit mass to me
+    for i in range(0,natoms):
+        mass.append(float(atomic_mass[' '+str(atom[i][0])+' '])*t)
+                    
+                    
+    trans = np.zeros((3*natoms,3*natoms-6),dtype=float)
+    fre = read_molcas_frequencies(log_filename,natoms)
+    
+    for i in range(0,3*natoms-6):
+        for k in range(0,natoms):
+            for j in range(3*k,3*k+3):
+                trans[j][i] = np.sqrt(mass[k]*fre[i])
+    
+    return trans
+
+
+from scipy.constants import N_A,m_e
+t = 1e-3/(N_A*m_e)
+
+
+def mass_scaleback(log_filename,xyz_filename,natoms):
+    '''get the transformation matrix for D'''
+    
+    from atomic_mass import atomic_mass
+    #get the mass of each atom   
+    atom = read_component(xyz_filename,natoms)
+    mass = []
+    #change the mass unit from atomic unit mass to me
+    for i in range(0,natoms):
+        mass.append(float(atomic_mass[' '+str(atom[i][0])+' ']))
+                    
+                    
+    tr = np.zeros((3*natoms,3*natoms-6),dtype=float)
+    
+    for i in range(0,3*natoms-6):
+        for j in range(0,natoms):
+            for k in range(3*j,3*j+3):
+                tr[k][i] = np.sqrt(mass[j])
+    
+    return tr
+
+
+def write_xyz(new_file,xyz_file,log_file,natoms):
+    
+    #calculate D
+    D_trans = get_D_trans(log_file,xyz_file,natoms)
+    D = read_molcas_nm(log_file,natoms)*mass_scaleback(log_file,xyz_file,natoms)/D_trans
+
+    #calculate cartisian coordinate
+    Q = np.random.normal(loc=0, scale=1/np.sqrt(2), size=(3*natoms-6,))
+    cart = (D.dot(Q)).T            
+    equi = read_equilibrium_position(xyz_file,natoms)
+    coord = (cart + equi.flatten()).reshape(natoms,3)
+    
+    
+    atom = read_component(xyz_file,natoms)
+    
+    with open(new_file, 'w') as f:
+        f.write(f"{natoms}\n")
+        f.write(f" \n")
+        
+        for atom, coord in zip(atom, coord):
+            f.write(f"{atom[0]} {coord[0]:.6f} {coord[1]:.6f} {coord[2]:.6f}\n")
+
+
+import os
+import shutil
+
+def generate_dir(dir_name,number,xyz_file,log_file,natoms):
+    
+    current_dir = os.path.dirname(os.path.realpath('__file__'))
+    
+    if not os.path.exists(dir_name):
+        os.mkdir(dir_name)
+        
+        for i in range(number):
+            file_name = dir_name + str(i) + ".xyz"
+            write_xyz(file_name,xyz_file,log_file,natoms)
+            src = os.path.join(current_dir, file_name)
+            dst = os.path.join(current_dir, dir_name)
+            shutil.move(src,dst)
+            
+    else:
+        d = os.path.join(current_dir, dir_name)
+        file_count = 0
+        file_list = os.listdir(d)
+        for file in file_list:
+            file_path = os.path.join(d, file)
+            if os.path.isfile(file_path):  
+                file_count += 1
+    
+        for i in range(number,number+file_count):
+            file_name = dir_name + str(i) + ".xyz"
+            write_xyz(file_name,xyz_file,log_file,natoms)
+            src = os.path.join(current_dir, file_name)
+            dst = os.path.join(current_dir, dir_name)
+            shutil.move(src,dst)
