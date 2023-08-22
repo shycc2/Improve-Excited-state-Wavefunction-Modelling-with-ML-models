@@ -1,0 +1,58 @@
+from model_set import create_model,symm_matrix_mse
+from train import train_model
+from evaluate_model_loss import evaluate_model_loss
+import schnetpack as spk
+import os
+import torch
+
+
+fock = spk.data.datamodule.AtomsDataModule(
+    datapath='fock_matrix_200_narrow.db',
+    batch_size=16,
+    split_file='diarylethene_200_narrow.npz',
+    transforms=[
+      spk.transform.ASENeighborList(cutoff=5),
+      spk.transform.CastTo32()
+    ],
+    property_units={'fock_matrix': 1.0},
+    num_workers=8,
+    pin_memory=True,
+    load_properties=['fock_matrix']
+)
+fock.prepare_data()
+fock.setup()
+
+
+cutoff = 5.
+loss_function=symm_matrix_mse
+lr=5e-4
+output_property_key='fock_matrix'
+basis_set_size=68
+
+
+model=create_model(loss_function,lr,output_property_key,basis_set_size, cutoff)
+
+os.mkdir('focktut')
+folder_path='./focktut'
+model=model
+dataset=fock
+epoch=100
+
+
+train_model(folder_path,model,dataset,epoch,'name')
+
+
+model_path = os.path.join('./focktut', "name")
+best_model = torch.load(model_path)
+split_path = 'diarylethene_200_narrow.npz'
+db_path = 'fock_matrix_200_narrow.db'
+
+loss=evaluate_model_loss(model_path, db_path, split_path)
+
+
+file_path = "loss.txt"
+
+data_str = "\n".join(str(num) for num in loss)
+
+with open(file_path, "w") as file:
+    file.write(data_str)
