@@ -1,5 +1,7 @@
 import numpy as np
 import scipy
+from scipy.constants import physical_constants,c,h,N_A,m_e
+wavenumber2hartree=1e2*c*h/physical_constants["Hartree energy"][0]
 
 def read_molcas_nm(filename,natoms):
     '''Read mass-weighted normal modes from Molcas log file'''
