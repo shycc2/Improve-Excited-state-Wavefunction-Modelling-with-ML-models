@@ -1,5 +1,5 @@
 &GATEWAY
-        coord=sys1_center.xyz
+        coord=sys1_reference.xyz
         basis=ANO-S-MB
         group=NoSym
 
