@@ -1,1 +1,333 @@
 
+import numpy as np
+from atomic_mass import atomic_mass
+from scipy.constants import physical_constants,c,h,N_A,m_e
+from atomic_mass import atomic_mass
+
+def read_molcas_nm(filename,natoms):
+    '''Read mass-weighted normal modes from Molcas log file'''
+    
+    frames=(3*natoms)//6
+    col_last_frame=(3*natoms)%6
+    
+    #array to store normal mode information
+    nm_matrix=np.zeros((3*natoms,3*natoms-6),dtype=float)
+    
+    #tag signalling normal mode information in log file
+    read_tag=False
+    
+
+    with open(filename,'r') as file:
+        for line in file:
+            if 'Harmonic frequencies in cm-1' in line:
+                read_tag=True
+            
+
+            if read_tag and 'IR Intensities in km/mol' in line:
+                for l in range(8):
+                        file.readline()
+                            #read nm data
+                for j in range(3*natoms):
+                    #conversion to float happens because of nm_matrix dtype
+                            nm_matrix[j,0:6]=file.readline().split()[-6:]  
+                for i in range(frames-2):
+                    #skip 9 lines
+                    for j in range(9):
+                            file.readline()
+                    for j in range(3*natoms):
+                        #conversion to float happens because of nm_matrix dtype
+                            nm_matrix[j,(i+1)*6:(i+2)*6]=file.readline().split()[-6:]    
+                    
+                    if col_last_frame!=0:
+                        #read last frame with less than 6 collumns
+                        #skip 9 lines
+                        for j in range(9):
+                            file.readline()
+                        #read nm data
+                        for j in range(3*natoms):
+                            #conversion to float happens because of nm_matrix dtype
+                            nm_matrix[j,-col_last_frame:]=file.readline().split()[-col_last_frame:]
+
+                        
+                #finished reading
+                #switch off read_tag
+                read_tag=False
+                        
+        #to remove transilations and rotations return nm_matrix[:,6:]
+        return nm_matrix
+    
+    
+def read_molcas_frequencies(filename,natoms):
+    '''Read frequencies (in cm-1) from Molcas log file.
+    Do not include the 6 first listed frequencies corresponding to translations and rotations'''
+    
+    wavenumber2hartree=1e2*c*h/physical_constants["Hartree energy"][0]
+    a = []
+    
+    
+    #frames counter
+    iframe=0
+    read_tag=False
+    frames=(3*natoms)//6
+    col_last_frame=(3*natoms)%6
+    
+    with open(filename,'r') as file:
+        for line in file:
+            if 'Harmonic frequencies in cm-1' in line:
+                read_tag=True
+                
+            if read_tag and "Frequency:" in line:
+                #do not read first frame with translation and rotations data
+                #these are often imaginary and hard to parse
+                if iframe<frames-1:
+                    a.append(line.split()[1:])
+                elif iframe==frames:
+                    if col_last_frame!=0:
+                        a.append(line.split()[1:])
+                    
+                    #finished reading, switch off read_tag
+                    read_tag=False
+                
+                iframe=iframe+1
+        frequencies = np.array(a).reshape(3*natoms-6).astype('float64')     
+        
+    return frequencies*wavenumber2hartree
+
+
+def read_component(filename,natoms):
+    '''get the atoms in the molecule'''
+    atoms = []
+    with open(filename,'r') as file:
+        
+        for line in file:
+        #skip 2 lines
+            for j in range(1):
+                file.readline()
+            #read nm data
+            for j in range(natoms):
+                #conversion to float happens because of nm_matrix dtype
+                atoms.append(file.readline().split()[0:1])
+        return atoms
+
+
+def read_equilibrium_position(filename,natoms):
+    '''Read cartesian coordination of equilibrim position from Molcas xyz file'''
+    
+    #array to store equilibium position information
+    eq_matrix=np.zeros((natoms,3),dtype=float)
+    
+    
+    with open(filename,'r') as file:
+        for line in file:
+            #skip 2 lines
+            for j in range(1):
+                file.readline()
+            #read nm data
+            for j in range(natoms):
+                #conversion to float happens because of nm_matrix dtype
+                eq_matrix[j,0:natoms]=file.readline().split()[-3:]
+            
+        return eq_matrix
+
+
+def get_D_trans(log_filename,xyz_filename,natoms):
+    '''get the transformation matrix for D'''
+    
+    xyz = read_component(xyz_filename,natoms)
+    
+    t = 1e-3/(N_A*m_e)
+    
+
+    #get the mass of each atom   
+    atom = read_component(xyz_filename,natoms)
+    mass = []
+    #change the mass unit from atomic unit mass to me
+    for i in range(0,natoms):
+        mass.append(float(atomic_mass[' '+str(atom[i][0])+' '])*t)
+                    
+                    
+    trans = np.zeros((3*natoms,3*natoms-6),dtype=float)
+    fre = read_molcas_frequencies(log_filename,natoms)
+    
+    for i in range(0,3*natoms-6):
+        for k in range(0,natoms):
+            for j in range(3*k,3*k+3):
+                trans[j][i] = np.sqrt(mass[k]*fre[i])
+    
+    return trans
+
+
+def mass_scaleback(log_filename,xyz_filename,natoms):
+    '''get the transformation matrix for D'''
+    
+    #get the mass of each atom   
+    atom = read_component(xyz_filename,natoms)
+    mass = []
+    #change the mass unit from atomic unit mass to me
+    for i in range(0,natoms):
+        mass.append(float(atomic_mass[' '+str(atom[i][0])+' ']))
+                    
+                    
+    tr = np.zeros((3*natoms,3*natoms-6),dtype=float)
+    
+    for i in range(0,3*natoms-6):
+        for j in range(0,natoms):
+            for k in range(3*j,3*j+3):
+                tr[k][i] = np.sqrt(mass[j])
+    
+    return tr
+
+
+def write_xyz(new_file,xyz_file,log_file,natoms,scal,vector_name,n):
+    
+    #calculate D
+    D_trans = get_D_trans(log_file,xyz_file,natoms)
+    D = read_molcas_nm(log_file,natoms)*mass_scaleback(log_file,xyz_file,natoms)/D_trans
+    
+    Q = np.zeros((3*natoms-6,),dtype=float)
+    Q[n] = np.random.uniform(-np.sqrt(2),np.sqrt(2))
+    cart = D.dot(Q)            
+    equi = read_equilibrium_position(xyz_file,natoms)
+    coord = (cart + equi.flatten()).reshape(natoms,3)
+    
+    
+    atom = read_component(xyz_file,natoms)
+    
+    with open(new_file, 'w') as f:
+        f.write(f"{natoms}\n")
+        f.write(f" \n")
+        
+        for atom, coord in zip(atom, coord):
+            f.write(f"{atom[0]} {coord[0]:.6f} {coord[1]:.6f} {coord[2]:.6f}\n")
+    
+
+    np.savetxt(vector_name,Q)
+
+
+import os
+
+def write_input(orbital_file,name,xyz_file,number):
+
+    content = '''&GATEWAY
+    coord=<<coord_file>>
+    basis=ANO-S-MB
+    group=NoSym
+
+&SEWARD
+&RASSCF
+    fileorb=<<file_orb>>
+    spin=1
+    nactel=10 0 0
+    inactive=36
+    ras2=10
+    CIroot=2 2 1
+    OUTOrbitals=Canonical
+    RLXRoot=1'''
+        
+    coord_file = xyz_file
+    file_orb = orbital_file
+        
+    content = content.replace('<<coord_file>>', coord_file)
+    content = content.replace('<<file_orb>>', file_orb)
+        
+    current_dir = os.path.dirname(os.path.realpath('__file__'))
+    file_path = os.path.join(current_dir,name)
+    
+    with open(file_path, 'w') as f:
+        f.write(content)
+
+
+import os
+import shutil
+
+def generate_dir(outdir_name,dir_name,number,xyz_file,log_file,natoms,orbital_file,scal,n):
+    
+    current_dir = os.path.dirname(os.path.realpath('__file__'))
+    os.mkdir(outdir_name)
+    out_dir = os.path.join(current_dir, outdir_name)
+
+    nm_number = number//10
+    
+    for i in range(nm_number):
+        # make directory
+        for j in range(n):
+            name = dir_name + '_' + 'Q' + str(i).zfill(2) + str(j).zfill(2)
+            os.mkdir(name)
+            shutil.move(name,out_dir)
+        
+          
+        #generate xyz file and move it to corresponding directory    
+            file_name = dir_name + '_' + 'Q' + str(i).zfill(2) + str(j).zfill(2)+ ".xyz"
+            vector_name = dir_name + '_' + 'Q' + str(i).zfill(2) + str(j).zfill(2) + '_'+ 'vector'
+            write_xyz(file_name,xyz_file,log_file,natoms,scal,vector_name,i)
+            src = os.path.join(current_dir, file_name)
+            dst = os.path.join(out_dir, name)
+            shutil.move(src,dst)
+        
+            srt_vec = os.path.join(current_dir,vector_name)
+            shutil.move(srt_vec,dst)
+        
+        #copy a orbital file and job file to new directory
+            shutil.copy(orbital_file, dst)
+         
+        #generate input file
+            input_name = dir_name + '_' + 'Q' + str(i).zfill(2) + str(j).zfill(2) + ".input"
+            xyz_name = dir_name + '_' + 'Q' + str(i).zfill(2) + str(j).zfill(2) + '.xyz'
+            write_input(orbital_file,input_name,file_name,i)
+            src1 = os.path.join(current_dir, input_name)
+            dst1 = os.path.join(out_dir, name)
+            shutil.move(src1,dst1)
+
+
+def read_xyz(number,natoms):
+    '''Read cartesian coordination of equilibrim position from Molcas xyz file'''
+    import numpy as np
+    import os
+    
+    #array to store equilibium position information
+    xyz_new=np.zeros((natoms,3),dtype=float)
+    xyz_origin=np.zeros((natoms,3),dtype=float)
+    distance = []
+    Q_sum = []
+    
+    for i in range(number):
+        for j in range(10):
+            ori_dir = os.path.dirname(os.path.realpath('__file__'))
+            f_name = 'test'
+            current_dir = os.path.join(ori_dir,f_name)
+            
+            
+            folder_name = 'system1_' + 'Q' + str(i).zfill(2) + str(j).zfill(2)
+            folder_path = os.path.join(current_dir,folder_name) 
+    
+            file_name = 'system1_' + 'Q' + str(i).zfill(2) + str(j).zfill(2) + '.xyz'
+            file_path = os.path.join(folder_path, file_name)
+    
+            with open(file_path,'r') as file:
+                for line in file:
+            #skip 2 lines
+                    for j in range(1):
+                        file.readline()
+                #read nm data
+                    for j in range(natoms):
+                    #conversion to float happens because of nm_matrix dtype
+                        xyz_new[j,0:natoms]=file.readline().split()[-3:]
+       
+    
+            with open('sys1_center_2.xyz','r') as file:
+                for line in file:
+            #skip 2 lines
+                    for j in range(1):
+                        file.readline()
+                #read nm data
+                    for j in range(natoms):
+                    #conversion to float happens because of nm_matrix dtype
+                        xyz_origin[j,0:natoms]=file.readline().split()[-3:]
+                    
+                cha = xyz_new-xyz_origin
+                distance.append(np.linalg.norm(cha))
+
+        
+    return distance
+
+
