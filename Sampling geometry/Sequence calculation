@@ -1,0 +1,289 @@
+import numpy as np
+import shutil
+from scipy.spatial import distance_matrix
+import subprocess
+from scipy.constants import physical_constants,c,h,N_A,m_e
+from atomic_mass import atomic_mass
+import os
+import numpy as np
+
+def read_ref_xyz(file_name):
+    '''Read the reference structure from XYZ file.
+    Returns a list with a list of atom chemical symbols, and
+    an array with a 3xN vector of cartesian coordinates.'''
+    
+    atoms=[]
+    cartesians=[]
+    
+    with open(file_name,'r') as xyz_file:
+        natoms=int(xyz_file.readline())
+        comment=xyz_file.readline()
+        for i in range(natoms):
+            split_line=xyz_file.readline().split()
+            atoms.append(split_line[0])
+            cartesians.append(split_line[1:])
+            
+    cartesians=np.array(cartesians,dtype=float)
+    
+    return[atoms,cartesians.flatten()]
+
+
+
+
+def sample_Q(nmodes,nsamples,dist_width):
+    '''Generates a matrix where each row is a geometry in normal modes,
+    sampled from a Gaussian distribution of width=dist_width.'''
+    
+    Q_samples=np.random.normal(loc=0,scale=dist_width,size=(nsamples,nmodes))
+
+    #add reference geometry (0 normal mode displacements) to the 
+    #begining of Q_samples
+    Q_samples=np.vstack((np.zeros((1,Q_samples.shape[1])),Q_samples))
+    
+    return Q_samples
+
+def nm2xyz_file(Q,ref_xyz,D,atomlist,file_name):
+    '''From a vector of normal modes displacements Q from a reference structure
+    in a single 3xN cartesian vector ref_xyz. a normal mode transformation
+    matrix D, and a list of chemical element symbols atomlist, write
+    an XYZ file with file_name.'''
+    
+    if len(atomlist)!=len(D)/3:
+        raise AtomNumberError('''Number of rows in normal mode matrix
+                              must be 3 times the number of atoms in atomlist.''')
+    elif D.shape[1]+6!=D.shape[0]:
+        raise InconsistentNormalModes('''Normal mode matrix must have 6 more
+                                      rows than columns.''')
+    
+    natoms=int(len(D)/3)
+    cartesian_displacements=D.dot(Q)
+    cartesians=ref_xyz+cartesian_displacements
+    cartesians.reshape(natoms,3)
+    
+    with open(file_name,'w') as f:
+        f.write(f"{natoms}\n")
+        f.write(f" \n")
+        
+        for i in range(natoms):
+            f.write(atomlist[i] + ' ' + str(cartesians[3*i]) + ' ' + str(cartesians[3*i+1]) + ' ' + str(cartesians[3*i+2]) + '\n')
+
+
+
+
+def create_calc_dir(Q,ref_xyz,D,atomlist,dir_name,file_base_name,input_template):
+    '''For a given normal mode displacement file Q, create a calculation directory
+    with the input file based on input_template, xyz file, and a file storing Q.'''
+    
+    os.mkdir(dir_name)
+    vec_name=dir_name+'/'+file_base_name+'_Qvec'
+    np.savetxt(vec_name,Q)
+    nm2xyz_file(Q,ref_xyz,D,atomlist,dir_name+'/'+file_base_name+'.xyz')
+    
+    with open(input_template,'r') as template:
+        with open(dir_name+'/'+file_base_name+'.input','w') as input_file:
+            for line in template:
+                if "coord" in line:
+                    input_file.write('coord='+file_base_name+'.xyz\n')
+                else:
+                    input_file.write(line)
+
+
+
+def increase_distance_order(Q_samples):
+    '''Q_samples is an array where each row is a geometry
+    in any set of coordinates (example normal modes or cartesians).
+    The function outputs a list of tuples of length 2 correponding
+    to pairs of positions of geometries in Q_samples with closest
+    distances.
+    This alows to perform a sequence of QChem calculations on a set
+    of geometries, guarantying always the smallest distance between
+    geometries (important if using orbital guesses for example).'''
+    
+    
+    dist_mat=distance_matrix(Q_samples,Q_samples,p=2)
+    
+    #the diagonal of distance_matrix will always be zero and minimum
+    #distance. Make all diagonal NaN
+    np.fill_diagonal(dist_mat,np.nan)
+    
+    sequence=[]
+    
+    for i in range(len(dist_mat)-1):
+        active_pos=[0]+[pair[1] for pair in sequence]
+        reduced_dist_mat=dist_mat[active_pos]
+        #need to strike out columns distances that have been calculated already
+        reduced_dist_mat[:,active_pos]=np.nan
+        
+        next_pos=np.unravel_index(np.nanargmin(reduced_dist_mat),reduced_dist_mat.shape)
+        #we are checking only rows of dist_mat which have already
+        #been included in sequence, so the row number in next_pos
+        #corresponds to this reduced array
+        sequence.append((active_pos[next_pos[0]],next_pos[1]))
+    
+    return sequence
+    #return [(item[0],item[1]-1) for item in sequence]
+
+
+
+def run_calculation(calc_dir,base_file_name,orb_file,original_orb_dir,scratch_dir):
+    '''First copy the orb_file on the original_orb_dir to the
+    calculation directory, create a symbolic link to the orb_file,
+    run Molcas calculation copying the files where needed.
+    Calculation will use scratch_dir as scratch space.
+    This directory must exist before calling the function, and should
+    be removed after calling the function.'''
+    shutil.copy(original_orb_dir+'/'+orb_file,calc_dir)
+    os.chdir(calc_dir)
+    
+    #on input template the orbital file has the generic name guess.Orb
+    #create a symbolic link with that name
+    os.symlink(orb_file,'guess.Orb')
+    dir=os.environ['HOME']+'/gen_stru_2500_July_31_2/'+calc_dir
+
+    os.environ['MOLCAS_WORKDIR']=scratch_dir
+    os.environ['MOLCAS_KEEP_WORKDIR']='YES'
+    os.environ['MOLCAS_MEM']='2000'
+    os.environ['MOLCAS_OUTPUT']=dir
+    subprocess.run(['pymolcas', '-f', base_file_name+'.input'])
+    
+    os.chdir(scratch_dir)
+    shutil.copy(calc_dir+'/'+base_file_name+'.rasscf.molden',dir)
+    shutil.copy(calc_dir+'/'+base_file_name+'.rasscf.h5',dir)
+    shutil.copy(calc_dir+'/'+base_file_name+'.RasOrb',dir)
+    
+    os.chdir('..')
+
+def read_molcas_nm(filename,natoms):
+    '''Read mass-weighted normal modes from Molcas log file'''
+    
+    frames=(3*natoms)//6
+    col_last_frame=(3*natoms)%6
+    
+    #array to store normal mode information
+    nm_matrix=np.zeros((3*natoms,3*natoms-6),dtype=float)
+    
+    #tag signalling normal mode information in log file
+    read_tag=False
+    
+
+    with open(filename,'r') as file:
+        for line in file:
+            if 'Harmonic frequencies in cm-1' in line:
+                read_tag=True
+            
+
+            if read_tag and 'IR Intensities in km/mol' in line:
+                for l in range(8):
+                        file.readline()
+                            #read nm data
+                for j in range(3*natoms):
+                    #conversion to float happens because of nm_matrix dtype
+                            nm_matrix[j,0:6]=file.readline().split()[-6:]  
+                for i in range(frames-2):
+                    #skip 9 lines
+                    for j in range(9):
+                            file.readline()
+                    for j in range(3*natoms):
+                        #conversion to float happens because of nm_matrix dtype
+                            nm_matrix[j,(i+1)*6:(i+2)*6]=file.readline().split()[-6:]    
+                    
+                    if col_last_frame!=0:
+                        #read last frame with less than 6 collumns
+                        #skip 9 lines
+                        for j in range(9):
+                            file.readline()
+                        #read nm data
+                        for j in range(3*natoms):
+                            #conversion to float happens because of nm_matrix dtype
+                            nm_matrix[j,-col_last_frame:]=file.readline().split()[-col_last_frame:]
+
+                        
+                #finished reading
+                #switch off read_tag
+                read_tag=False
+                        
+        #to remove transilations and rotations return nm_matrix[:,6:]
+        return nm_matrix
+
+
+def read_molcas_frequencies(filename,natoms):
+    '''Read frequencies (in cm-1) from Molcas log file.
+    Do not include the 6 first listed frequencies corresponding to translations and rotations'''
+    
+    wavenumber2hartree=1e2*c*h/physical_constants["Hartree energy"][0]
+    a = []
+    
+    
+    #frames counter
+    iframe=0
+    read_tag=False
+    frames=(3*natoms)//6
+    col_last_frame=(3*natoms)%6
+    
+    with open(filename,'r') as file:
+        for line in file:
+            if 'Harmonic frequencies in cm-1' in line:
+                read_tag=True
+                
+            if read_tag and "Frequency:" in line:
+                #do not read first frame with translation and rotations data
+                #these are often imaginary and hard to parse
+                if iframe<frames-1:
+                    a.append(line.split()[1:])
+                elif iframe==frames:
+                    if col_last_frame!=0:
+                        a.append(line.split()[1:])
+                    
+                    #finished reading, switch off read_tag
+                    read_tag=False
+                
+                iframe=iframe+1
+        frequencies = np.array(a).reshape(3*natoms-6).astype('float64')     
+        
+    return frequencies*wavenumber2hartree
+
+
+def get_D_trans(log_filename,xyz_filename,natoms,atomlist):
+    '''get the transformation matrix for D'''
+    
+    t = 1e-3/(N_A*m_e)
+    
+
+    #get the mass of each atom   
+    mass = []
+    #change the mass unit from atomic unit mass to me
+    for i in range(0,natoms):
+        mass.append(float(atomic_mass[' '+str(atomlist[i][0])+' '])*t)
+                    
+                    
+    trans = np.zeros((3*natoms,3*natoms-6),dtype=float)
+    fre = read_molcas_frequencies(log_filename,natoms)
+    
+    for i in range(0,3*natoms-6):
+        for k in range(0,natoms):
+            for j in range(3*k,3*k+3):
+                trans[j][i] = np.sqrt(mass[k]*fre[i])
+    
+    return trans
+
+
+def mass_scaleback(log_filename,xyz_filename,natoms,atomlist):
+    '''get the transformation matrix for D'''
+    
+    #get the mass of each atom   
+    mass = []
+    #change the mass unit from atomic unit mass to me
+    for i in range(0,natoms):
+        mass.append(float(atomic_mass[' '+str(atomlist[i][0])+' ']))
+                    
+                    
+    tr = np.zeros((3*natoms,3*natoms-6),dtype=float)
+    
+    for i in range(0,3*natoms-6):
+        for j in range(0,natoms):
+            for k in range(3*j,3*j+3):
+                tr[k][i] = np.sqrt(mass[j])
+    
+    return tr
+
+
