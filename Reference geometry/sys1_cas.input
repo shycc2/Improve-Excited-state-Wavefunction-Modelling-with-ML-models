@@ -1,0 +1,25 @@
+&GATEWAY
+        coord=sys1_center.xyz
+        basis=ANO-S-MB
+        group=NoSym
+
+&SEWARD
+&RASSCF
+       * file containing initial starting orbitals
+       fileorb=sys1_casfre.RasOrb
+       * single states only
+       spin=1
+       * 10 active electrons (0 correspomd to RAS space so this is a CASSCF calculation)
+       nactel=10 0 0
+       * 37 inactive orbitals
+       inactive=36
+       * 10 orbintals on the RAS2 active space
+       ras2=10
+       * calculate 2 states (2 roots) with equal weights
+       CIroot=2 2 1
+       * OUtput canonical orbitals (eigenvectors of the effective Fock matrix)
+       OUTOrbitals=Canonical
+       * Do the frequency calculation on the ground state
+       RLXRoot=1
+
+&MCKINLEY
